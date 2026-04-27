@@ -28,7 +28,7 @@ and then build the cython extension:
 If you are running from the repo, the editable install above already builds the C extension. To rebuild after source changes:
 
 ``` sh
-pip install --no-build-isolation -Ceditable.rebuild=true -Cbuild-dir=build -e '.[train]'
+pip install --no-build-isolation -C editable.rebuild=true -C build-dir=build -e '.[train]'
 ```
 
 To train, you must have a CSV file with `|` as a delimiter and the format:

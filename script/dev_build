@@ -21,8 +21,8 @@ subprocess.check_call(
         "pip",
         "install",
         "--no-build-isolation",
-        "-Ceditable.rebuild=true",
-        "-Cbuild-dir=build",
+        "--config-settings=editable.rebuild=true",
+        "--config-settings=build-dir=build",
         "-e",
         str(_PROGRAM_DIR),
     ]

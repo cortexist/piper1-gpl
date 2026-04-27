@@ -21,7 +21,7 @@ python3 -m pip install -e .[dev]
 The editable install above (`pip install -e .[dev]`) already builds the C extension in place. To rebuild after changes to `espeakbridge.c` or `CMakeLists.txt`, run `script/dev_build` or re-run pip:
 
 ``` sh
-pip install --no-build-isolation -Ceditable.rebuild=true -Cbuild-dir=build -e .[dev]
+pip install --no-build-isolation -C editable.rebuild=true -C build-dir=build -e .[dev]
 ```
 
 With `editable.rebuild=true`, `import piper` will check timestamps and rebuild as needed. The persistent `build-dir=build` avoids a from-scratch rebuild each time.
