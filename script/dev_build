@@ -22,7 +22,7 @@ subprocess.check_call(
         "install",
         "--no-build-isolation",
         "-Ceditable.rebuild=true",
-        "-Cbuild-dir=build/{wheel_tag}",
+        "-Cbuild-dir=build",
         "-e",
         str(_PROGRAM_DIR),
     ]
