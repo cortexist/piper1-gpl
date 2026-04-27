@@ -1,6 +1,86 @@
 [build-system]
-requires = ["scikit-build", "setuptools", "wheel", "cmake", "ninja"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "piper-tts"
+version = "1.4.2"
+description = "Fast and local neural text-to-speech engine"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "The Home Assistant Authors", email = "hello@home-assistant.io" },
+]
+keywords = ["home", "assistant", "tts", "text-to-speech"]
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "onnxruntime>=1,<2",
+    "pathvalidate>=3,<4",
+]
+
+[project.urls]
+Homepage = "http://github.com/OHF-voice/piper1-gpl"
+
+[project.optional-dependencies]
+train = [
+    "torch>=2,<3",
+    "lightning>=2,<3",
+    "tensorboard>=2,<3",
+    "tensorboardX>=2,<3",
+    "jsonargparse[signatures]>=4.27.7",
+    "onnx>=1,<2",
+    "pysilero-vad>=2.1,<3",
+    "cython>=3,<4",
+    "librosa<1",
+]
+dev = [
+    "black==24.8.0",
+    "flake8==7.1.1",
+    "mypy==1.14.0",
+    "pylint==3.2.7",
+    "pytest==8.3.4",
+    "build==1.2.2",
+    "scikit-build-core>=0.10",
+    "cmake>=3.26,<4",
+    "ninja>=1,<2",
+]
+http = [
+    "flask>=3,<4",
+]
+alignment = [
+    "onnx>=1,<2",
+]
+zh = [
+    "g2pW>=0.1.1,<1",
+    "sentence-stream>=1.2.1,<2",
+    "unicode-rbnf>=2.4.0,<3",
+    "torch>=2,<3",
+    "requests>=2,<3",
+]
+
+[project.scripts]
+piper = "piper.__main__:main"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.26"
+wheel.packages = ["src/piper"]
+wheel.install-dir = "piper"
+wheel.py-api = "cp39"
+sdist.include = [
+    "COPYING",
+    "src/piper/espeak-ng-data/**",
+]
 
 [tool.black]
 exclude = '''

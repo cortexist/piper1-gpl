@@ -1,0 +1,6 @@
+{
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/src"
+  ]
+}

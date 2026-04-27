@@ -1,2 +1,0 @@
-include COPYING
-recursive-include src/piper/espeak-ng-data *
