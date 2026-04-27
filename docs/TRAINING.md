@@ -25,10 +25,10 @@ and then build the cython extension:
 ./build_monotonic_align.sh
 ```
 
-If you are running from the repo, you will need to do a dev build:
+If you are running from the repo, the editable install above already builds the C extension. To rebuild after source changes:
 
 ``` sh
-python3 setup.py build_ext --inplace
+pip install --no-build-isolation -Ceditable.rebuild=true -Cbuild-dir=build/{wheel_tag} -e '.[train]'
 ```
 
 To train, you must have a CSV file with `|` as a delimiter and the format:

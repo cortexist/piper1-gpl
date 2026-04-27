@@ -15,6 +15,16 @@ else:
     python_exe = "python3"
 
 subprocess.check_call(
-    [python_exe, str(_PROGRAM_DIR / "setup.py"), "build_ext", "--inplace"]
+    [
+        python_exe,
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+        "-Ceditable.rebuild=true",
+        "-Cbuild-dir=build/{wheel_tag}",
+        "-e",
+        str(_PROGRAM_DIR),
+    ]
     + sys.argv[1:]
 )

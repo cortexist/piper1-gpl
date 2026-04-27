@@ -18,11 +18,13 @@ source .venv/bin/activate
 python3 -m pip install -e .[dev]
 ```
 
-Next, run `script/dev_build` or manually build the extension:
+The editable install above (`pip install -e .[dev]`) already builds the C extension in place. To rebuild after changes to `espeakbridge.c` or `CMakeLists.txt`, run `script/dev_build` or re-run pip:
 
 ``` sh
-python3 setup.py build_ext --inplace
+pip install --no-build-isolation -Ceditable.rebuild=true -Cbuild-dir=build/{wheel_tag} -e .[dev]
 ```
+
+With `editable.rebuild=true`, `import piper` will check timestamps and rebuild as needed. The persistent `build-dir` avoids a from-scratch rebuild each time.
 
 Now you should be able to use `script/run` or manually run Piper:
 
