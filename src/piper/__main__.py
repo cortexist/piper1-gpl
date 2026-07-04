@@ -94,6 +94,15 @@ def main() -> None:
         "synthesized instead of whole sentences (requires the voice halves "
         "from `python3 -m piper.split`; audio is not normalized)",
     )
+    parser.add_argument(
+        "--output-mux",
+        "--output_mux",
+        action="store_true",
+        help="Write a framed PCM + phoneme-timing stream to stdout for "
+        "lip-sync/actuator frontends (see piper.mux); each sentence's phoneme "
+        "schedule precedes its audio. Separate with `python3 -m piper.demux`. "
+        "Combine with --stream to also chunk the audio.",
+    )
     #
     parser.add_argument(
         "--data-dir",
@@ -107,8 +116,8 @@ def main() -> None:
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
     args, unknown_args = parser.parse_known_args()
-    if args.stream and not args.output_raw:
-        parser.error("--stream requires --output-raw")
+    if args.stream and not (args.output_raw or args.output_mux):
+        parser.error("--stream requires --output-raw or --output-mux")
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
     _LOGGER.debug(args)
 
@@ -186,6 +195,38 @@ def main() -> None:
                     wav_file.writeframes(silence_int16_bytes)
 
                 wav_file.writeframes(audio_chunk.audio_int16_bytes)
+
+    if args.output_mux:
+        # Framed PCM + phoneme-timing stream (see piper.mux); each sentence's
+        # schedule frame precedes its audio, so a lip-sync frontend downstream
+        # of `python3 -m piper.demux` has the timings before the sound.
+        from .mux import CONFIG, PCM, SCHEDULE, schedule_payload, write_frame
+
+        out = sys.stdout.buffer
+        write_frame(
+            out,
+            CONFIG,
+            ("rate=%d\nwidth=2\nchannels=1\n" % voice.config.sample_rate).encode(),
+        )
+        for line in lines():
+            if args.stream:
+                chunks = voice.synthesize_stream(line, syn_config)
+            else:
+                chunks = voice.synthesize(line, syn_config, include_alignments=True)
+
+            for audio_chunk in chunks:
+                if audio_chunk.phoneme_alignments:
+                    write_frame(
+                        out,
+                        SCHEDULE,
+                        schedule_payload(
+                            audio_chunk.phoneme_alignments, audio_chunk.sample_rate
+                        ),
+                    )
+
+                write_frame(out, PCM, audio_chunk.audio_int16_bytes)
+
+        return
 
     if args.output_raw:
         # Write raw audio to stdout as its produced
