@@ -98,6 +98,55 @@ class AudioChunk:
         return self.audio_int16_array.tobytes()
 
 
+def _group_phoneme_alignments(
+    config,
+    phonemes: list[str],
+    phoneme_ids: list[int],
+    phoneme_id_samples: Optional[np.ndarray],
+) -> Optional[list[PhonemeAlignment]]:
+    """
+    Create phoneme/audio alignments by determining the phoneme ids produced
+    by each phoneme (including the next PAD), and then summing the audio
+    sample counts for those phoneme ids. None if unavailable or misaligned.
+    """
+    if (phoneme_id_samples is None) or (len(phoneme_id_samples) != len(phoneme_ids)):
+        return None
+
+    pad_ids = config.phoneme_id_map.get(PAD, [])
+    phoneme_id_idx = 0
+    alignments: list[PhonemeAlignment] = []
+    for phoneme in itertools.chain([BOS], phonemes, [EOS]):
+        expected_ids = config.phoneme_id_map.get(phoneme, [])
+
+        ids_to_check: Sequence[int]
+        if phoneme != EOS:
+            ids_to_check = list(itertools.chain(expected_ids, pad_ids))
+        else:
+            ids_to_check = expected_ids
+
+        start_phoneme_id_idx = phoneme_id_idx
+        for phoneme_id in ids_to_check:
+            if (phoneme_id_idx >= len(phoneme_ids)) or (
+                phoneme_id != phoneme_ids[phoneme_id_idx]
+            ):
+                _LOGGER.debug("Phoneme alignment failed")
+                return None
+
+            phoneme_id_idx += 1
+
+        alignments.append(
+            PhonemeAlignment(
+                phoneme=phoneme,
+                phoneme_ids=ids_to_check,
+                num_samples=sum(
+                    phoneme_id_samples[start_phoneme_id_idx:phoneme_id_idx]
+                ),
+            )
+        )
+
+    return alignments
+
+
 def _iter_decoded_chunks(
     dec_session: onnxruntime.InferenceSession,
     z: np.ndarray,
@@ -448,56 +497,9 @@ class PiperVoice:
 
             audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
 
-            phoneme_alignments: Optional[list[PhonemeAlignment]] = None
-            if (phoneme_id_samples is not None) and (
-                len(phoneme_id_samples) == len(phoneme_ids)
-            ):
-                # Create phoneme/audio alignments by determining the phoneme ids
-                # produced by each phoneme (including the next PAD), and then
-                # summing the audio sample counts for those phoneme ids.
-                pad_ids = self.config.phoneme_id_map.get(PAD, [])
-                phoneme_id_idx = 0
-                phoneme_alignments = []
-                alignment_failed = False
-                for phoneme in itertools.chain([BOS], phonemes, [EOS]):
-                    expected_ids = self.config.phoneme_id_map.get(phoneme, [])
-
-                    ids_to_check: Sequence[int]
-                    if phoneme != EOS:
-                        ids_to_check = list(itertools.chain(expected_ids, pad_ids))
-                    else:
-                        ids_to_check = expected_ids
-
-                    start_phoneme_id_idx = phoneme_id_idx
-                    for phoneme_id in ids_to_check:
-                        if phoneme_id_idx >= len(phoneme_ids):
-                            # Ran out of phoneme ids
-                            alignment_failed = True
-                            break
-
-                        if phoneme_id != phoneme_ids[phoneme_id_idx]:
-                            # Bad alignment
-                            alignment_failed = True
-                            break
-
-                        phoneme_id_idx += 1
-
-                    if alignment_failed:
-                        break
-
-                    phoneme_alignments.append(
-                        PhonemeAlignment(
-                            phoneme=phoneme,
-                            phoneme_ids=ids_to_check,
-                            num_samples=sum(
-                                phoneme_id_samples[start_phoneme_id_idx:phoneme_id_idx]
-                            ),
-                        )
-                    )
-
-                if alignment_failed:
-                    phoneme_alignments = None
-                    _LOGGER.debug("Phoneme alignment failed")
+            phoneme_alignments = _group_phoneme_alignments(
+                self.config, phonemes, phoneme_ids, phoneme_id_samples
+            )
 
             yield AudioChunk(
                 sample_rate=self.config.sample_rate,
@@ -564,7 +566,7 @@ class PiperVoice:
         if noise_w_scale is None:
             noise_w_scale = self.config.noise_w_scale
 
-        z_name = self.enc_session.get_outputs()[0].name
+        enc_outputs = [o.name for o in self.enc_session.get_outputs()]
         for phonemes in self.phonemize(text):
             if not phonemes:
                 continue
@@ -590,7 +592,25 @@ class PiperVoice:
             if (self.config.num_speakers > 1) and (speaker_id is not None):
                 args["sid"] = np.array([speaker_id], dtype=np.int64)
 
-            z = self.enc_session.run([z_name], args)[0]
+            result = self.enc_session.run(enc_outputs, args)
+            z = result[0]
+
+            # An encoder half split with an alignment output (see piper.split)
+            # also returns w_ceil: per-id durations in latent frames, known
+            # BEFORE any audio decodes. The whole sentence's phoneme schedule
+            # rides the first chunk — a lip-sync frontend has it while the
+            # audio is still being synthesized.
+            phoneme_id_samples: Optional[np.ndarray] = None
+            phoneme_alignments: Optional[list[PhonemeAlignment]] = None
+            if len(result) > 1:
+                phoneme_id_samples = (
+                    result[1].squeeze() * self.config.hop_length
+                ).astype(np.int64)
+                phoneme_alignments = _group_phoneme_alignments(
+                    self.config, phonemes, phoneme_ids, phoneme_id_samples
+                )
+
+            first = True
             for audio in _iter_decoded_chunks(
                 self.dec_session, z, chunk_frames, overlap_frames
             ):
@@ -606,7 +626,10 @@ class PiperVoice:
                     ),
                     phonemes=phonemes,
                     phoneme_ids=phoneme_ids,
+                    phoneme_id_samples=phoneme_id_samples if first else None,
+                    phoneme_alignments=phoneme_alignments if first else None,
                 )
+                first = False
 
     def synthesize_wav(
         self,
