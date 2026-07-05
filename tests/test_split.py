@@ -17,7 +17,7 @@ import onnxruntime
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
-from piper.split import find_decoder_input, split_voice
+from piper.split import find_decoder_inputs, split_voice
 from piper.voice import _iter_decoded_chunks
 
 _CHANNELS = 8
@@ -121,7 +121,7 @@ def test_find_decoder_input(tmp_path: Path) -> None:
     """The single tensor crossing into /dec/ is found."""
     model_path = tmp_path / "voice.onnx"
     _make_vits_like_model(model_path)
-    assert find_decoder_input(onnx.load(str(model_path))) == "/flow/Mul_output_0"
+    assert find_decoder_inputs(onnx.load(str(model_path))) == ["/flow/Mul_output_0"]
 
 
 def test_find_decoder_input_requires_dec(tmp_path: Path) -> None:
@@ -134,7 +134,7 @@ def test_find_decoder_input_requires_dec(tmp_path: Path) -> None:
     )
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 15)])
     with pytest.raises(ValueError):
-        find_decoder_input(model)
+        find_decoder_inputs(model)
 
 
 def test_split_and_chunked_decode_exact(tmp_path: Path) -> None:

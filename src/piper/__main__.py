@@ -199,11 +199,33 @@ def main() -> None:
 
                 wav_file.writeframes(audio_chunk.audio_int16_bytes)
 
+    def control(line, on_meta=None):
+        """Consume an in-band control line (see piper.control). True if the
+        line was control, not speech; set_voice retargets syn_config and, in
+        mux mode, reports the value through on_meta."""
+        from .control import parse_control, resolve_speaker
+
+        parsed = parse_control(line)
+        if parsed is None:
+            return False
+
+        kind, value = parsed
+        if kind == "set_voice":
+            sid = resolve_speaker(voice.config, value)
+            if sid is None:
+                _LOGGER.warning("set_voice: unknown speaker %r", value)
+            else:
+                syn_config.speaker_id = sid
+                _LOGGER.debug("set_voice: %r -> speaker %d", value, sid)
+                if on_meta is not None:
+                    on_meta(value)
+        return True
+
     if args.output_mux:
         # Framed PCM + phoneme-timing stream (see piper.mux); each sentence's
         # schedule frame precedes its audio, so a lip-sync frontend downstream
         # of `python3 -m piper.demux` has the timings before the sound.
-        from .mux import CONFIG, PCM, SCHEDULE, schedule_payload, write_frame
+        from .mux import CONFIG, META, PCM, SCHEDULE, schedule_payload, write_frame
 
         out = sys.stdout.buffer
         write_frame(
@@ -212,6 +234,8 @@ def main() -> None:
             ("rate=%d\nwidth=2\nchannels=1\n" % voice.config.sample_rate).encode(),
         )
         for line in lines():
+            if control(line, lambda v: write_frame(out, META, v.encode("utf-8"))):
+                continue
             if args.stream:
                 chunks = voice.synthesize_stream(line, syn_config)
             else:
@@ -234,6 +258,8 @@ def main() -> None:
     if args.output_raw:
         # Write raw audio to stdout as its produced
         for line in lines():
+            if control(line):
+                continue
             if args.stream:
                 # Decoder chunks as they decode (see piper.split); sentence
                 # boundaries are not visible here, so no inter-sentence silence.

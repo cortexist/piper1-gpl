@@ -29,12 +29,14 @@ _LOGGER = logging.getLogger(__name__)
 _DECODER_PREFIX = "/dec/"
 
 
-def find_decoder_input(model) -> str:
+def find_decoder_inputs(model) -> list:
     """
-    Find the one tensor that crosses from the encoder side into the decoder.
+    Find the tensors that cross from the encoder side into the decoder — the
+    masked latent z FIRST, then any conditioning (a multi-speaker voice also
+    feeds the decoder its speaker embedding).
 
     :param model: Loaded ONNX ModelProto of a Piper VITS voice.
-    :return: Name of the boundary tensor (the masked latent z).
+    :return: Boundary tensor names, the latent first.
     """
     graph = model.graph
     producers = {
@@ -62,12 +64,16 @@ def find_decoder_input(model) -> str:
             ):
                 boundary.add(input_name)
 
-    if len(boundary) != 1:
-        raise ValueError(
-            f"Expected exactly one tensor crossing into the decoder, found: {boundary}"
-        )
+    conv_pre = next(
+        node
+        for node in decoder_nodes
+        if node.op_type == "Conv"
+    )
+    z_name = conv_pre.input[0]
+    if z_name not in boundary:
+        raise ValueError(f"Decoder input conv feeds from {z_name}, not a boundary?")
 
-    return boundary.pop()
+    return [z_name] + sorted(boundary - {z_name})
 
 
 def split_voice(
@@ -111,10 +117,12 @@ def split_voice(
     except (ImportError, ValueError) as err:
         _LOGGER.debug("No alignment output added: %s", err)
 
-    z_name = find_decoder_input(model)
+    boundaries = find_decoder_inputs(model)
+    _LOGGER.debug("Decoder boundary tensors: %s", boundaries)
 
-    # conv_pre's weight gives the latent channel count for the boundary's
-    # value_info (older exports never ran shape inference over it).
+    # The boundary tensors need value_info entries for the Extractor (older
+    # exports never ran shape inference over them). The latent's channel
+    # count comes from conv_pre's weight; conditioning shapes stay symbolic.
     conv_pre = next(
         node
         for node in model.graph.node
@@ -126,23 +134,27 @@ def split_voice(
         if tensor.name == conv_pre.input[1]
     )
     z_channels = conv_pre_weight.dims[1]
-    _LOGGER.debug("Boundary %s, %s latent channels", z_name, z_channels)
-
-    if not any(vi.name == z_name for vi in model.graph.value_info):
-        model.graph.value_info.append(
-            helper.make_tensor_value_info(
-                z_name, TensorProto.FLOAT, ["batch_size", z_channels, "z_time"]
+    known = {vi.name for vi in model.graph.value_info}
+    for name in boundaries:
+        if name in known:
+            continue
+        if name == boundaries[0]:
+            vi = helper.make_tensor_value_info(
+                name, TensorProto.FLOAT, ["batch_size", z_channels, "z_time"]
             )
-        )
+        else:
+            vi = helper.make_tensor_value_info(name, TensorProto.FLOAT, None)
+        model.graph.value_info.append(vi)
 
     extractor = onnx.utils.Extractor(model)
     graph_inputs = [graph_input.name for graph_input in model.graph.input]
     # Auxiliary outputs (the alignment w_ceil, anything else the export
     # carries besides the waveform) are produced on the encoder side — keep
-    # them on the encoder half, z first.
+    # them on the encoder half, boundaries first (latent, conditioning),
+    # in the same order the decoder half declares its inputs.
     aux = [o.name for o in model.graph.output if o.name != "output"]
-    encoder = extractor.extract_model(graph_inputs, [z_name] + aux)
-    decoder = extractor.extract_model([z_name], ["output"])
+    encoder = extractor.extract_model(graph_inputs, boundaries + aux)
+    decoder = extractor.extract_model(boundaries, ["output"])
 
     onnx.save(encoder, str(enc_path))
     onnx.save(decoder, str(dec_path))

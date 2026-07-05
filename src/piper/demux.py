@@ -8,6 +8,9 @@ transition before the sound arrives:
 
     start_ms<TAB>duration_ms<TAB>phoneme<TAB>next_phoneme
 
+Metadata frames (a ``set_voice`` mood, say) print as ``meta<TAB>payload``
+the moment they arrive — they always precede the audio they color.
+
 Times are milliseconds on the stream clock (cumulative across sentences). The
 audio clock is the bytes forwarded to the sink: a real-time sink (aplay, a
 sound server) applies backpressure, so bytes-forwarded tracks playback. With
@@ -24,7 +27,7 @@ import subprocess
 import sys
 import time
 
-from .mux import CONFIG, PCM, SCHEDULE, parse_config, parse_schedule, read_frame
+from .mux import CONFIG, META, PCM, SCHEDULE, parse_config, parse_schedule, read_frame
 
 # One pacing slice of audio; also the jitter bound on event emission.
 _SLICE_MS = 10
@@ -74,6 +77,10 @@ def main() -> None:
             config = parse_config(payload)
             rate = config.get("rate", rate)
             width = config.get("width", width)
+        elif kind == META:
+            meta = payload.decode("utf-8", "replace").strip()
+            sys.stdout.write("meta\t%s\n" % meta)
+            sys.stdout.flush()
         elif kind == SCHEDULE:
             # The schedule precedes its sentence's audio; its times are
             # sentence-relative, and the sentence starts where the previous
