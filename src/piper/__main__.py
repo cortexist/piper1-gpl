@@ -207,15 +207,18 @@ def main() -> None:
             return False
 
         kind, value = parsed
-        if kind == "set_voice":
+        if kind == "set_voice" and value:
+            # The metadata always travels (a face can change even when this
+            # voice has no matching speaker); the AUDIO switches only when
+            # the speaker resolves.
+            if on_meta is not None:
+                on_meta(value)
             sid = resolve_speaker(voice.config, value)
             if sid is None:
-                _LOGGER.warning("set_voice: unknown speaker %r", value)
+                _LOGGER.warning("set_voice: no speaker %r in this voice", value)
             else:
                 syn_config.speaker_id = sid
                 _LOGGER.debug("set_voice: %r -> speaker %d", value, sid)
-                if on_meta is not None:
-                    on_meta(value)
         return True
 
     if args.output_mux:
