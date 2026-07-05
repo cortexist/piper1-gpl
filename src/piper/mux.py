@@ -12,6 +12,10 @@ a mechanical actuator needs, so a single pipe can feed both. Frames are
   from the encoder half's duration output, so it precedes the first PCM chunk
   by the whole sentence.
 - ``P``: signed 16-bit mono PCM samples.
+- ``M``: metadata from an in-band control line (see piper.control) — e.g.
+  the value of a ``set_voice`` call, written when it takes effect, BEFORE
+  the audio it colors. The pipe does not interpret the payload; meaning
+  belongs to the two ends.
 
 ``python3 -m piper.demux`` separates the two again: PCM to an audio sink,
 schedule lines to stdout, each a little ahead of the audio clock.
@@ -23,6 +27,7 @@ from typing import BinaryIO, Iterable, List, Optional, Tuple
 CONFIG = b"C"
 SCHEDULE = b"A"
 PCM = b"P"
+META = b"M"
 
 
 def write_frame(out: BinaryIO, kind: bytes, payload: bytes) -> None:

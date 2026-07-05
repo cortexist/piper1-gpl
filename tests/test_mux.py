@@ -68,3 +68,28 @@ def test_schedule_round_trip() -> None:
     durs = [e[1] for e in events]
     assert starts == [0.0, 100.0, 300.0, 300.0]
     assert durs[0] == 100.0 and durs[1] == 200.0 and durs[2] == 0.0
+
+
+def test_parse_control() -> None:
+    """Control lines classify; marker tokens inside are dialect-agnostic."""
+    from piper.control import parse_control
+
+    line = '<|tool_call>call:set_voice{speaker_id:<|"|>happy<|"|>}<tool_call|>'
+    assert parse_control(line) == ("set_voice", "happy")
+    assert parse_control("  <|tool_call>set_voice{3}<tool_call|>  ") == ("set_voice", "3")
+    assert parse_control("<|tool_call>call:do_thing{x:1}<tool_call|>") == ("ignore", None)
+    assert parse_control("Plain speech, not control.") is None
+    assert parse_control("<|tool_call>unterminated") is None
+
+
+def test_resolve_speaker() -> None:
+    """Names resolve through the voice config; numbers bound-check."""
+    from types import SimpleNamespace
+    from piper.control import resolve_speaker
+
+    cfg = SimpleNamespace(num_speakers=3, speaker_id_map={"happy": 2, "sad": 1})
+    assert resolve_speaker(cfg, "happy") == 2
+    assert resolve_speaker(cfg, "1") == 1
+    assert resolve_speaker(cfg, "7") is None
+    assert resolve_speaker(cfg, "angry") is None
+    assert resolve_speaker(cfg, None) is None

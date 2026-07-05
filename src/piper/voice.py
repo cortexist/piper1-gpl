@@ -152,6 +152,7 @@ def _iter_decoded_chunks(
     z: np.ndarray,
     chunk_frames: int,
     overlap_frames: int,
+    conditioning: Optional[dict] = None,
 ) -> Iterable[np.ndarray]:
     """
     Run the decoder half over latent chunks, yielding audio as it decodes.
@@ -165,6 +166,9 @@ def _iter_decoded_chunks(
     :param z: Masked latent from the encoder half, shape (1, channels, frames).
     :param chunk_frames: Latent frames per emitted chunk.
     :param overlap_frames: Latent frames of cropped context on each side.
+    :param conditioning: Time-independent decoder inputs passed whole to every
+        chunk (a multi-speaker voice conditions its decoder on the speaker
+        embedding).
     """
     z_name = dec_session.get_inputs()[0].name
     num_frames = z.shape[2]
@@ -173,9 +177,10 @@ def _iter_decoded_chunks(
         end = min(start + chunk_frames, num_frames)
         ctx_start = max(0, start - overlap_frames)
         ctx_end = min(num_frames, end + overlap_frames)
-        audio = dec_session.run(
-            ["output"], {z_name: z[:, :, ctx_start:ctx_end]}
-        )[0].reshape(-1)
+        feed = {z_name: z[:, :, ctx_start:ctx_end]}
+        if conditioning:
+            feed.update(conditioning)
+        audio = dec_session.run(["output"], feed)[0].reshape(-1)
         if hop is None:
             hop = audio.shape[0] // (ctx_end - ctx_start)
 
@@ -560,7 +565,14 @@ class PiperVoice:
                 args["sid"] = np.array([speaker_id], dtype=np.int64)
 
             result = self.enc_session.run(enc_outputs, args)
-            z = result[0]
+            by_name = dict(zip(enc_outputs, result))
+
+            # The decoder half's inputs come from the encoder by name: the
+            # latent first (chunked along time), then any conditioning a
+            # multi-speaker decoder wants whole (the speaker embedding).
+            dec_inputs = [i.name for i in self.dec_session.get_inputs()]
+            z = by_name[dec_inputs[0]]
+            conditioning = {n: by_name[n] for n in dec_inputs[1:] if n in by_name}
 
             # An encoder half split with an alignment output (see piper.split)
             # also returns w_ceil: per-id durations in latent frames, known
@@ -569,9 +581,10 @@ class PiperVoice:
             # audio is still being synthesized.
             phoneme_id_samples: Optional[np.ndarray] = None
             phoneme_alignments: Optional[list[PhonemeAlignment]] = None
-            if len(result) > 1:
+            aux = [n for n in enc_outputs if n not in dec_inputs]
+            if aux:
                 phoneme_id_samples = (
-                    result[1].squeeze() * self.config.hop_length
+                    by_name[aux[0]].squeeze() * self.config.hop_length
                 ).astype(np.int64)
                 phoneme_alignments = _group_phoneme_alignments(
                     self.config, phonemes, phoneme_ids, phoneme_id_samples
@@ -579,7 +592,7 @@ class PiperVoice:
 
             first = True
             for audio in _iter_decoded_chunks(
-                self.dec_session, z, chunk_frames, overlap_frames
+                self.dec_session, z, chunk_frames, overlap_frames, conditioning
             ):
                 if syn_config.volume != 1.0:
                     audio = audio * syn_config.volume
