@@ -65,7 +65,9 @@ def find_decoder_inputs(model) -> list:
                 boundary.add(input_name)
 
     conv_pre = next(
-        node for node in decoder_nodes if node.op_type == "Conv"
+        node
+        for node in decoder_nodes
+        if node.op_type == "Conv"
     )
     z_name = conv_pre.input[0]
     if z_name not in boundary:
@@ -103,6 +105,18 @@ def split_voice(
     dec_path = output_dir / model_path.with_suffix(".dec.onnx").name
 
     model = onnx.load(str(model_path))
+
+    # Expose the duration predictor's w_ceil as a graph output when it isn't
+    # one already, so the encoder half can hand synthesize_stream a phoneme
+    # schedule before any audio decodes (--output-mux). Voices without a
+    # recognizable Ceil tensor just skip it.
+    try:
+        from .patch_voice_with_alignment import add_alignment_output
+
+        _LOGGER.debug("Alignment output: %s", add_alignment_output(model))
+    except (ImportError, ValueError) as err:
+        _LOGGER.debug("No alignment output added: %s", err)
+
     boundaries = find_decoder_inputs(model)
     _LOGGER.debug("Decoder boundary tensors: %s", boundaries)
 
@@ -134,7 +148,12 @@ def split_voice(
 
     extractor = onnx.utils.Extractor(model)
     graph_inputs = [graph_input.name for graph_input in model.graph.input]
-    encoder = extractor.extract_model(graph_inputs, boundaries)
+    # Auxiliary outputs (the alignment w_ceil, anything else the export
+    # carries besides the waveform) are produced on the encoder side — keep
+    # them on the encoder half, boundaries first (latent, conditioning),
+    # in the same order the decoder half declares its inputs.
+    aux = [o.name for o in model.graph.output if o.name != "output"]
+    encoder = extractor.extract_model(graph_inputs, boundaries + aux)
     decoder = extractor.extract_model(boundaries, ["output"])
 
     onnx.save(encoder, str(enc_path))

@@ -94,6 +94,15 @@ def main() -> None:
         "synthesized instead of whole sentences (requires the voice halves "
         "from `python3 -m piper.split`; audio is not normalized)",
     )
+    parser.add_argument(
+        "--output-mux",
+        "--output_mux",
+        action="store_true",
+        help="Write a framed PCM + phoneme-timing stream to stdout for "
+        "lip-sync/actuator frontends (see piper.mux); each sentence's phoneme "
+        "schedule precedes its audio. Separate with `python3 -m piper.demux`. "
+        "Combine with --stream to also chunk the audio.",
+    )
     #
     parser.add_argument(
         "--data-dir",
@@ -107,8 +116,8 @@ def main() -> None:
         "--debug", action="store_true", help="Print DEBUG messages to console"
     )
     args, unknown_args = parser.parse_known_args()
-    if args.stream and not args.output_raw:
-        parser.error("--stream requires --output-raw")
+    if args.stream and not (args.output_raw or args.output_mux):
+        parser.error("--stream requires --output-raw or --output-mux")
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
     _LOGGER.debug(args)
 
@@ -187,9 +196,70 @@ def main() -> None:
 
                 wav_file.writeframes(audio_chunk.audio_int16_bytes)
 
+    def control(line, on_meta=None):
+        """Consume an in-band control line (see piper.control). True if the
+        line was control, not speech; set_voice retargets syn_config and, in
+        mux mode, reports the value through on_meta."""
+        from .control import parse_control, resolve_speaker
+
+        parsed = parse_control(line)
+        if parsed is None:
+            return False
+
+        kind, value = parsed
+        if kind == "set_voice" and value:
+            # The metadata always travels (a face can change even when this
+            # voice has no matching speaker); the AUDIO switches only when
+            # the speaker resolves.
+            if on_meta is not None:
+                on_meta(value)
+            sid = resolve_speaker(voice.config, value)
+            if sid is None:
+                _LOGGER.warning("set_voice: no speaker %r in this voice", value)
+            else:
+                syn_config.speaker_id = sid
+                _LOGGER.debug("set_voice: %r -> speaker %d", value, sid)
+        return True
+
+    if args.output_mux:
+        # Framed PCM + phoneme-timing stream (see piper.mux); each sentence's
+        # schedule frame precedes its audio, so a lip-sync frontend downstream
+        # of `python3 -m piper.demux` has the timings before the sound.
+        from .mux import CONFIG, META, PCM, SCHEDULE, schedule_payload, write_frame
+
+        out = sys.stdout.buffer
+        write_frame(
+            out,
+            CONFIG,
+            ("rate=%d\nwidth=2\nchannels=1\n" % voice.config.sample_rate).encode(),
+        )
+        for line in lines():
+            if control(line, lambda v: write_frame(out, META, v.encode("utf-8"))):
+                continue
+            if args.stream:
+                chunks = voice.synthesize_stream(line, syn_config)
+            else:
+                chunks = voice.synthesize(line, syn_config, include_alignments=True)
+
+            for audio_chunk in chunks:
+                if audio_chunk.phoneme_alignments:
+                    write_frame(
+                        out,
+                        SCHEDULE,
+                        schedule_payload(
+                            audio_chunk.phoneme_alignments, audio_chunk.sample_rate
+                        ),
+                    )
+
+                write_frame(out, PCM, audio_chunk.audio_int16_bytes)
+
+        return
+
     if args.output_raw:
         # Write raw audio to stdout as its produced
         for line in lines():
+            if control(line):
+                continue
             if args.stream:
                 # Decoder chunks as they decode (see piper.split); sentence
                 # boundaries are not visible here, so no inter-sentence silence.

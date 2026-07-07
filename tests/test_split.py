@@ -6,8 +6,11 @@ convolutional "decoder" under the /dec/ namespace with a real receptive field
 (Conv -> ConvTranspose upsampler -> Conv), mirroring how a torch export names
 a `self.dec` submodule. The conditioned variant adds what a multi-speaker
 voice has: a speaker embedding crossing into the decoder as a second boundary
-tensor. That is enough to exercise the boundary finder, the split, and the
-exactness of overlapped-chunk decoding against the monolithic output.
+tensor. The model always carries a duration-predictor "durs" output (a w_ceil
+stand-in) on the encoder side, which the split must keep on the encoder half
+(piper.mux rides it). That is enough to exercise the boundary finder, the
+split, and the exactness of overlapped-chunk decoding against the monolithic
+output.
 """
 
 from pathlib import Path
@@ -29,7 +32,9 @@ _UPSAMPLE = 4  # hop: samples per latent frame
 def _make_vits_like_model(path: Path, conditioned: bool = False) -> None:
     """Build input -> /flow/Mul -> /dec/ conv stack -> output; with
     conditioned=True a speaker-embedding-like tensor also crosses into the
-    decoder (broadcast-added after conv_pre), as in multi-speaker voices."""
+    decoder (broadcast-added after conv_pre), as in multi-speaker voices. A
+    duration-predictor "durs" output (w_ceil stand-in) is always produced on
+    the encoder side, so the split must carry it on the encoder half."""
     rng = np.random.default_rng(0)
 
     def weight(name, *shape):
@@ -103,6 +108,18 @@ def _make_vits_like_model(path: Path, conditioned: bool = False) -> None:
         helper.make_node(
             "Tanh", ["/dec/conv_post/Conv_output_0"], ["output"], name="/dec/Tanh"
         ),
+        # A stand-in for the duration predictor's w_ceil: an auxiliary graph
+        # output produced on the encoder side, which the split must carry on
+        # the encoder half (piper.mux rides it).
+        helper.make_node(
+            "ReduceMean",
+            ["/flow/Mul_output_0"],
+            ["/dp/mean_output_0"],
+            name="/dp/mean",
+            axes=[1],
+            keepdims=0,
+        ),
+        helper.make_node("Ceil", ["/dp/mean_output_0"], ["durs"], name="/dp/Ceil"),
     ]
     graph = helper.make_graph(
         nodes,
@@ -111,7 +128,10 @@ def _make_vits_like_model(path: Path, conditioned: bool = False) -> None:
         outputs=[
             helper.make_tensor_value_info(
                 "output", TensorProto.FLOAT, ["batch_size", 1, "samples"]
-            )
+            ),
+            helper.make_tensor_value_info(
+                "durs", TensorProto.FLOAT, ["batch_size", "frames"]
+            ),
         ],
         initializer=[
             numpy_helper.from_array(np.float32(1.0), "one"),
@@ -174,10 +194,14 @@ def test_split_and_chunked_decode_exact(tmp_path: Path) -> None:
         str(dec_path), providers=["CPUExecutionProvider"]
     )
 
-    # enc half reproduces the boundary tensor
-    z_name = enc_session.get_outputs()[0].name
-    latent = enc_session.run([z_name], {"input": z})[0]
+    # enc half reproduces the boundary tensor and carries the aux output
+    enc_outputs = [o.name for o in enc_session.get_outputs()]
+    z_name = enc_outputs[0]
+    assert enc_outputs[1:] == ["durs"]
+    latent, durs = enc_session.run(enc_outputs, {"input": z})
     assert np.array_equal(latent, z)  # the mini "flow" is Mul by 1.0
+    assert durs.shape == (1, 64)
+    assert np.array_equal(durs, np.ceil(z.mean(axis=1)))
 
     reference = dec_session.run(["output"], {z_name: latent})[0].reshape(-1)
     assert reference.shape[0] == 64 * _UPSAMPLE
