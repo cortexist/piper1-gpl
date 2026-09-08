@@ -32,6 +32,22 @@ def test_load_voice() -> None:
     assert voice.config.espeak_voice == "en-us"
 
 
+def test_sleeping_workers_preserve_synthesis(tmp_path: Path) -> None:
+    """Use real ORT options and inference; disabling spin changes scheduling only."""
+    model = tmp_path / "voice.onnx"
+    shutil.copy(_TEST_CONFIG, model.with_suffix(".onnx.json"))
+    for suffix in (".onnx", ".enc.onnx", ".dec.onnx"):
+        shutil.copy(_TEST_VOICE, model.with_suffix(suffix))
+    voice = PiperVoice.load(model, streaming=True, thread_spinning=False)
+    for session in (voice.session, voice.enc_session, voice.dec_session):
+        options = session.get_session_options()
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+        assert options.get_session_config_entry("session.inter_op.allow_spinning") == "0"
+    assert b"".join(c.audio_int16_bytes for c in voice.synthesize("Hello.")) == b"".join(
+        c.audio_int16_bytes for c in PiperVoice.load(_TEST_VOICE).synthesize("Hello.")
+    )
+
+
 def test_phonemize_synthesize() -> None:
     """Test phonemizing and synthesizing."""
     voice = PiperVoice.load(_TEST_VOICE)
