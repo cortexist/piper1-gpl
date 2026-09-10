@@ -73,11 +73,6 @@ def main() -> None:
     )
     #
     parser.add_argument("--cuda", action="store_true", help="Use GPU")
-    parser.add_argument(
-        "--no-thread-spinning",
-        action="store_true",
-        help="Let idle ONNX workers sleep to reduce contention with other inference",
-    )
     #
     parser.add_argument(
         "--sentence-silence",
@@ -169,10 +164,7 @@ def main() -> None:
 
     # Load voice
     _LOGGER.debug("Loading voice: '%s'", model_path)
-    voice = PiperVoice.load(
-        model_path, use_cuda=args.cuda, streaming=args.stream,
-        thread_spinning=not args.no_thread_spinning,
-    )
+    voice = PiperVoice.load(model_path, use_cuda=args.cuda, streaming=args.stream)
     syn_config = SynthesisConfig(
         speaker_id=args.speaker,
         length_scale=args.length_scale,

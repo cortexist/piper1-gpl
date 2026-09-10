@@ -52,7 +52,6 @@ Some other useful command-line options:
 * `--sentence-silence` - add seconds of silence to all but the last sentence
 * `--volume` - adjust volume multiplier (default: 1.0)
 * `--no-normalize` - disable automatic volume normalization
-* `--no-thread-spinning` - let idle ONNX workers sleep; may reduce contention when running alongside other inference
 
 ### Raw Phonemes
 

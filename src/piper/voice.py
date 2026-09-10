@@ -223,7 +223,6 @@ class PiperVoice:
         download_dir: Optional[Union[str, Path]] = None,
         include_alignments: bool = False,
         streaming: bool = False,
-        thread_spinning: bool = True,
     ) -> "PiperVoice":
         """
         Load an ONNX model and config.
@@ -239,8 +238,6 @@ class PiperVoice:
         :param streaming: If True, also load the <voice>.enc.onnx/<voice>.dec.onnx
             halves written by `python3 -m piper.split` so synthesize_stream() can
             emit audio in decoder chunks.
-        :param thread_spinning: Let idle ONNX workers spin waiting for work.
-            Disable to reduce contention with other inference on the same CPU.
         :return: Voice object.
         """
         if config_path is None:
@@ -290,11 +287,6 @@ class PiperVoice:
                 # Tensor not found or model already patched: use it as-is.
                 _LOGGER.debug("Not patching model for alignments: %s", error)
 
-        session_options = onnxruntime.SessionOptions()
-        if not thread_spinning:
-            session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
-            session_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
-
         enc_session: Optional[onnxruntime.InferenceSession] = None
         dec_session: Optional[onnxruntime.InferenceSession] = None
         if streaming:
@@ -308,12 +300,12 @@ class PiperVoice:
 
             enc_session = onnxruntime.InferenceSession(
                 str(enc_path),
-                sess_options=session_options,
+                sess_options=onnxruntime.SessionOptions(),
                 providers=providers,
             )
             dec_session = onnxruntime.InferenceSession(
                 str(dec_path),
-                sess_options=session_options,
+                sess_options=onnxruntime.SessionOptions(),
                 providers=providers,
             )
 
@@ -321,7 +313,7 @@ class PiperVoice:
             config=PiperConfig.from_dict(config_dict),
             session=onnxruntime.InferenceSession(
                 model_or_path,
-                sess_options=session_options,
+                sess_options=onnxruntime.SessionOptions(),
                 providers=providers,
             ),
             espeak_data_dir=Path(espeak_data_dir),
